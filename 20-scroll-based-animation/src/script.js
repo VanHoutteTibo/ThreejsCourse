@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import * as dat from 'lil-gui'
 import gsap from 'gsap'
+import CANNON from 'cannon'
 
 THREE.ColorManagement.enabled = false
 

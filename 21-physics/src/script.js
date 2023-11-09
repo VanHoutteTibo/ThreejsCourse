@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import * as dat from 'lil-gui'
+import CANNON from 'cannon'
 
 THREE.ColorManagement.enabled = false
 
@@ -8,6 +9,47 @@ THREE.ColorManagement.enabled = false
  * Debug
  */
 const gui = new dat.GUI()
+const debugObject = {}
+
+debugObject.createShpere = () =>
+{
+    createShpere(
+        Math.random() * 0.5, 
+        {
+            x: (Math.random() - 0.5) * 3,
+            y: 3, 
+            z: (Math.random() - 0.5) * 3
+        })
+}
+gui.add(debugObject, 'createShpere')
+
+debugObject.createBox = () =>
+{
+    createBox(
+        Math.random() * 0.5, 
+        {
+            x: (Math.random() - 0.5) * 3,
+            y: 3, 
+            z: (Math.random() - 0.5) * 3
+        })
+}
+gui.add(debugObject, 'createBox')
+
+// Reset
+debugObject.reset = () =>
+{
+    for(const object of objectsToUpdate)
+    {
+        // Remove body
+        object.body.removeEventListener('collide', playHitSound)
+        world.removeBody(object.body)
+
+        // Remove mesh
+        scene.remove(object.mesh)
+    }
+    objectsToUpdate.splice(0, objectsToUpdate.length)
+}
+gui.add(debugObject, 'reset')
 
 /**
  * Base
@@ -33,21 +75,54 @@ const environmentMapTexture = cubeTextureLoader.load([
     '/textures/environmentMaps/0/nz.png'
 ])
 
+const hitSound = new Audio('/sounds/hit.mp3')
+
+const playHitSound = (collision) =>
+{
+    const impactStrength = collision.contact.getImpactVelocityAlongNormal()
+
+    if(impactStrength > 1.5)
+    {
+        hitSound.volume = Math.random()
+        hitSound.currentTime = 0
+        hitSound.play()
+    }
+}
+
 /**
- * Test sphere
- */
-const sphere = new THREE.Mesh(
-    new THREE.SphereGeometry(0.5, 32, 32),
-    new THREE.MeshStandardMaterial({
-        metalness: 0.3,
-        roughness: 0.4,
-        envMap: environmentMapTexture,
-        envMapIntensity: 0.5
-    })
+* Physics
+*/
+const world = new CANNON.World()
+world.broadphase = new CANNON.SAPBroadphase(world)
+world.allowSleep = true
+world.gravity.set(0, -9.82, 0)
+
+//materials
+const defaultMaterial = new CANNON.Material('default')
+
+
+const defaultContactMaterial = new CANNON.ContactMaterial(
+    defaultMaterial,
+    defaultMaterial,
+    {
+        friction: 0.1,
+        restitution: 0.7
+    }
 )
-sphere.castShadow = true
-sphere.position.y = 0.5
-scene.add(sphere)
+world.addContactMaterial(defaultContactMaterial)
+world.defaultContactMaterial = defaultContactMaterial
+
+
+
+//floor
+const floorShape = new CANNON.Plane()
+const floorBody = new CANNON.Body()
+floorBody.mass = 0
+floorBody.addShape(floorShape)
+floorBody.quaternion.setFromAxisAngle(new CANNON.Vec3(-1, 0, 0), Math.PI * 0.5)
+world.addBody(floorBody)
+
+
 
 /**
  * Floor
@@ -131,13 +206,99 @@ renderer.setSize(sizes.width, sizes.height)
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
 
 /**
+ * Utils
+ */
+const objectsToUpdate = []
+
+const SphereGeometry = new THREE.SphereGeometry(1, 20, 20)
+const sphereMaterial = new THREE.MeshStandardMaterial({
+    metalness: 0.3,
+    roughness: 0.4,
+    envMap: environmentMapTexture
+})
+
+const BoxGeometry = new THREE.BoxGeometry(1,1,1)
+
+const createShpere = (radius, position) =>
+{
+    //three.js mesh
+    const mesh = new THREE.Mesh(SphereGeometry, sphereMaterial)
+    mesh.scale.set(radius, radius, radius)
+    mesh.castShadow = true
+    mesh.position.copy(position)
+    scene.add(mesh)
+
+    //cannon.js body
+    const shape = new CANNON.Sphere(radius)
+    const body = new CANNON.Body({
+        mass: 1,
+        position: new CANNON.Vec3(0, 3, 0),
+        shape: shape,
+        material: defaultMaterial
+    })
+    body.position.copy(position)
+    body.addEventListener('collide', playHitSound)
+    world.addBody(body)
+
+    //save in objects to update
+    objectsToUpdate.push({
+        mesh,
+        body
+    })
+}
+
+createShpere(0.5, {x: 0, y: 3, z: 0})
+
+const createBox = (scale, position) =>
+{
+    //three.js mesh
+    const mesh = new THREE.Mesh(BoxGeometry, sphereMaterial)
+    mesh.scale.set(scale, scale, scale)
+    mesh.castShadow = true
+    mesh.position.copy(position)
+    scene.add(mesh)
+
+    //cannon.js body
+    const shape = new CANNON.Box(new CANNON.Vec3(scale * 0.5, scale * 0.5, scale * 0.5))
+    const body = new CANNON.Body({
+        mass: 1,
+        position: new CANNON.Vec3(0, 3, 0),
+        shape: shape,
+        material: defaultMaterial
+    })
+    body.position.copy(position)
+    body.addEventListener('collide', playHitSound)
+    world.addBody(body)
+
+    //save in objects to update
+    objectsToUpdate.push({
+        mesh,
+        body
+    })
+}
+
+createBox(0.2, {x: 1, y: 1, z: 1})
+
+/**
  * Animate
  */
 const clock = new THREE.Clock()
+let oldElapsedTime = 0
 
 const tick = () =>
 {
     const elapsedTime = clock.getElapsedTime()
+    const deltaTime = elapsedTime - oldElapsedTime
+    oldElapsedTime = elapsedTime
+
+    
+    //Update physics world
+    world.step(1 / 60, deltaTime, 3)
+
+    for(const object of objectsToUpdate)
+    {
+        object.mesh.position.copy(object.body.position)
+    }
 
     // Update controls
     controls.update()
